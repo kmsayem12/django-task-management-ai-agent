@@ -1,5 +1,7 @@
 import json
+import logging
 from uuid import uuid4
+# from typing import Dict, Any, List, Optional
 from django.http import JsonResponse
 from rest_framework import viewsets, status
 from django.contrib.auth.models import User
@@ -12,52 +14,86 @@ from rest_framework.permissions import IsAuthenticatedOrReadOnly, IsAuthenticate
 
 from .models import Task
 from ai_agent import get_agent
+from ai_agent.chat_service import ChatService
 from .serializers import TaskSerializer, UserSerializer
-
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Create your views here.
+
+
 class TaskViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for handling Task CRUD operations with additional custom actions.
+    """
     queryset = Task.objects.all().order_by('-created_at')
     serializer_class = TaskSerializer
     # Requires authentication for all actions
     permission_classes = [IsAuthenticated]
 
-    def create(self, request, *args, **kwargs):
-        print("Create request data:", request.data)
-        return super().create(request, *args, **kwargs)
-
     # Override the create method to set the created_by field
     def perform_create(self, serializer):
-        print("Creating task for user:", self.request.user)
-        print("Data:", serializer.validated_data)
+        """Set the created_by field when creating a task."""
+        logger.info(f"Saving task for user: {self.request.user.username}")
         serializer.save(created_by=self.request.user)
 
     # Optional: Custom action to mark a task as done
     @action(detail=True, methods=['post'])
     def complete(self, request, pk=None):
-        task = get_object_or_404(Task, pk=pk)
-        task.status = 'completed'
-        task.save()
-        return Response({'status': 'task completed'}, status=status.HTTP_200_OK)
+        """Mark a task as completed."""
+        try:
+            task = get_object_or_404(Task, pk=pk)
+            task.status = 'completed'
+            task.save()
+
+            logger.info(f"Task {pk} completed by user {request.user.username}")
+            return Response({'status': 'task completed'}, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error completing task {pk}: {str(e)}")
+            return Response(
+                {'error': 'Failed to complete task'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     # Optional: Custom action to assign a task by username
     @action(detail=True, methods=['post'])
     def assign(self, request, pk=None, username=None):
-        task = get_object_or_404(Task, pk=pk)
-        username = request.data.get('username')
-        if not username:
-            return Response({'error': 'Username is required'}, status=status.HTTP_400_BAD_REQUEST)
+        """Assign a task to a user by username."""
         try:
-            user = User.objects.get(username=username)
-            task.assigned_to = user
-            task.save()
-            serializer = self.get_serializer(task)
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        except User.DoesNotExist:
-            return Response({'error': 'User does not exist'}, status=status.HTTP_404_NOT_FOUND)
+            task = get_object_or_404(Task, pk=pk)
+            username = request.data.get('username')
+            if not username:
+                return Response({'error': 'Username is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                user = User.objects.get(username=username)
+                task.assigned_to = user
+                task.save()
+                serializer = self.get_serializer(task)
+                logger.info(
+                    f"Task {pk} assigned to {username} by {request.user.username}")
+                return Response(serializer.data, status=status.HTTP_200_OK)
+
+            except User.DoesNotExist:
+                logger.warning(
+                    f"Attempted to assign task {pk} to non-existent user: {username}")
+                return Response(
+                    {'error': f'User "{username}" does not exist'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+        except Exception as e:
+            logger.error(f"Error assigning task {pk}: {str(e)}")
+            return Response(
+                {'error': 'Failed to assign task'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class UserViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for handling User operations.
+    """
     queryset = User.objects.all().order_by('username')
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated]
@@ -70,49 +106,71 @@ class UserViewSet(viewsets.ModelViewSet):
 def chat_with_agent(request):
     """
     API endpoint to initiate a chat with the LangGraph AI agent.
+
+    Expected JSON payload:
+    {
+        "message": "Your message here"
+    }
+
+    Returns:
+    {
+        "data": [
+            {
+                "content": "...",
+                "name": "...",
+                "status": "...",
+                "tool_call_id": "..."
+            }
+        ]
+    }
     """
-    if request.method == 'POST':
+    try:
+        # Parse request data
         try:
             data = json.loads(request.body)
-            user_input = data.get('message')
-            user = request.user
-            user_id = user.id
-
-            if not user_input:
-                return JsonResponse({"error": "No message provided"}, status=status.HTTP_400_BAD_REQUEST)
-
-            checkPointer = InMemorySaver()
-            agent = get_agent(checkPointer)
-
-            config = {"configurable": {
-                "created_by": user_id, "thread_id": str(uuid4())}}
-            response = agent.invoke(
-                {"messages": [{"role": "user", "content": user_input}]}, config)
-
-           # Filter only ToolMessage instances
-            tool_messages = [
-                {
-                    "content": parse_content(msg.content),
-                    "name": msg.name,
-                    "status": getattr(msg, "status", None),
-                    "tool_call_id": getattr(msg, "tool_call_id", None),
-                }
-                for msg in response["messages"]
-                if isinstance(msg, ToolMessage)
-            ]
-
-            return JsonResponse({"data": tool_messages}, status=status.HTTP_202_ACCEPTED)
-
         except json.JSONDecodeError:
-            return JsonResponse({"error": "Invalid JSON"}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            return JsonResponse({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.warning(
+                f"Invalid JSON received from user {request.user.username}")
+            return JsonResponse(
+                {"error": "Invalid JSON format"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
+        user_input = data.get('message', '').strip()
 
-def parse_content(content):
-    if isinstance(content, str):
+        if not user_input:
+            return JsonResponse(
+                {"error": "Message is required and cannot be empty"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Initialize and use chat service
         try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            return content  # fallback to raw string if not valid JSON
-    return content
+            chat_service = ChatService()
+            result = chat_service.process_chat(user_input, request.user.id)
+            # is result is list then return first element
+            if isinstance(result["data"], list):
+                result = result["data"][0]
+            return JsonResponse(result, status=status.HTTP_200_OK)
+
+        except ValueError as e:
+            logger.error(
+                f"Validation error for user {request.user.username}: {str(e)}")
+            return JsonResponse(
+                {"error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(
+                f"Unexpected error in chat processing for user {request.user.username}: {str(e)}")
+            return JsonResponse(
+                {"error": "An unexpected error occurred while processing your request"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    except Exception as e:
+        logger.error(f"Critical error in chat_with_agent: {str(e)}")
+        return JsonResponse(
+            {"error": "A critical error occurred"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
