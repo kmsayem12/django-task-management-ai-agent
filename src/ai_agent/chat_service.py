@@ -84,12 +84,13 @@ class ChatService:
             if isinstance(msg, ToolMessage):
                 content = self._parse_content(msg.content)
                 logger.debug(f"ToolMessage: {content}")
-                tool_messages.append({
-                    "content": content,
-                    "name": msg.name,
-                    "status": getattr(msg, "status", None),
-                    "tool_call_id": getattr(msg, "tool_call_id", None),
-                })
+                if content is not None:
+                    tool_messages.append({
+                        "content": content,
+                        "name": msg.name,
+                        "status": getattr(msg, "status", None),
+                        "tool_call_id": getattr(msg, "tool_call_id", None),
+                    })
 
         # Fallback to AIMessage if no tool messages were found
         if not tool_messages:
@@ -121,8 +122,8 @@ class ChatService:
             try:
                 return json.loads(content)
             except json.JSONDecodeError:
-                return content
-        return content
+                return None
+        return None
 
 
 class ChatServiceFactory:
