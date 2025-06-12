@@ -62,7 +62,6 @@ You can send natural language messages like the following:
 { "message": "search the task title is 'Implement new feature' and limit is 5" }
 { "message": "delete the task title is 'My Task'" }
 { "message": "delete the task_id is 11" }
-{ "message": "delete the task_id is 11" }
 { "message": "update the task title is 'Implement new feature for the about page design' and status is in_progress" }
 { "message": "can you create the task title is 'implementing a new feature for the search page refactor.' and description is 'test description'" }
 ```
