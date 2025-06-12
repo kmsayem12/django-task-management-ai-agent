@@ -7,7 +7,7 @@ import logging
 from uuid import uuid4
 from typing import Dict, Any, List
 
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import ToolMessage, AIMessage
 from langgraph.checkpoint.memory import InMemorySaver
 
 from ai_agent import get_agent
@@ -82,14 +82,28 @@ class ChatService:
 
         for msg in messages:
             if isinstance(msg, ToolMessage):
-                tool_message = {
-                    "content": self._parse_content(msg.content),
+                content = self._parse_content(msg.content)
+                logger.debug(f"ToolMessage: {content}")
+                tool_messages.append({
+                    "content": content,
                     "name": msg.name,
                     "status": getattr(msg, "status", None),
                     "tool_call_id": getattr(msg, "tool_call_id", None),
-                }
-                tool_messages.append(tool_message)
+                })
 
+        # Fallback to AIMessage if no tool messages were found
+        if not tool_messages:
+            # last AIMessage is usually the most relevant
+            for msg in reversed(messages):
+                if isinstance(msg, AIMessage):
+                    logger.debug(f"Fallback AIMessage: {msg.content}")
+                    tool_messages.append({
+                        "content": msg.content,
+                        "name": "AI",  # or msg.name if available
+                        "status": "fallback",
+                        "tool_call_id": None,
+                    })
+                break  # only pick the last relevant one
         return tool_messages
 
     @staticmethod
