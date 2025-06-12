@@ -8,7 +8,7 @@ This API allows you to interact with an AI agent (powered by LangGraph) to manag
 
 **URL:** `/api/ai/chat/`  
 **Method:** `POST`  
-**Auth Required:** ✅ Yes (JWT or Session-based)
+**Auth Required:**
 
 ---
 
@@ -17,7 +17,11 @@ This API allows you to interact with an AI agent (powered by LangGraph) to manag
 ### Headers
 
 Content-Type: application/json
-Authorization: Bearer <your_token>
+Authorization: token <your_token>
+
+### Generate Token
+
+run `python generate-token.py`
 
 ### Body Parameters
 
