@@ -1,13 +1,17 @@
 import json
+from uuid import uuid4
 from django.http import JsonResponse
 from rest_framework import viewsets, status
 from django.contrib.auth.models import User
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
+from langchain_core.messages import ToolMessage
+from langgraph.checkpoint.memory import InMemorySaver  # Radis Memory  Saver
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticatedOrReadOnly, IsAuthenticated, AllowAny
 
 from .models import Task
+from ai_agent import get_agent
 from .serializers import TaskSerializer, UserSerializer
 
 
@@ -59,3 +63,56 @@ class UserViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     lookup_field = 'username'  # Allows fetching users by username
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def chat_with_agent(request):
+    """
+    API endpoint to initiate a chat with the LangGraph AI agent.
+    """
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+            user_input = data.get('message')
+            user = request.user
+            user_id = user.id
+
+            if not user_input:
+                return JsonResponse({"error": "No message provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+            checkPointer = InMemorySaver()
+            agent = get_agent(checkPointer)
+
+            config = {"configurable": {
+                "created_by": user_id, "thread_id": str(uuid4())}}
+            response = agent.invoke(
+                {"messages": [{"role": "user", "content": user_input}]}, config)
+
+           # Filter only ToolMessage instances
+            tool_messages = [
+                {
+                    "content": parse_content(msg.content),
+                    "name": msg.name,
+                    "status": getattr(msg, "status", None),
+                    "tool_call_id": getattr(msg, "tool_call_id", None),
+                }
+                for msg in response["messages"]
+                if isinstance(msg, ToolMessage)
+            ]
+
+            return JsonResponse({"data": tool_messages}, status=status.HTTP_202_ACCEPTED)
+
+        except json.JSONDecodeError:
+            return JsonResponse({"error": "Invalid JSON"}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+def parse_content(content):
+    if isinstance(content, str):
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            return content  # fallback to raw string if not valid JSON
+    return content
