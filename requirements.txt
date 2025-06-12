@@ -1,10 +1,7 @@
 Django>=5,<6
 djangorestframework~=3.16.0
-celery~=5.3
-redis~=5.0
-langchain # Let pip find the latest compatible version
+langgraph
 langchain-core # Let pip find the latest compatible version
-langchain-community # Let pip find the latest compatible version
-langchain-openai # Let pip find the latest compatible version (if you use OpenAI)
 langchain-google-genai~=2.1.5 # Or similar, as this is a specific LLM integration
 python-dotenv~=1.0
+jupyter
