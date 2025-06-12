@@ -1,4 +1,6 @@
-# 🤖 AI Chat API Documentation
+# 🤖 Agentic AI Implementation with The Django
+
+##AI Chat API Documentation
 
 This API allows you to interact with an AI agent (powered by LangGraph) to manage tasks using natural language.
 
