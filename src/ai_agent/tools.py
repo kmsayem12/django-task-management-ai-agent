@@ -92,7 +92,6 @@ def create_task(
             "assigned_to": assigned_to_user.id if assigned_to_user else None,
             "created_by": created_by_user.id
         }
-
         # 3. Use DRF serializer for validation + creation
         serializer = TaskSerializer(data=task_data)
         if serializer.is_valid():
@@ -140,24 +139,18 @@ def update_task(
         created_by = validator.get_user_from_config(config)
         task = validator.get_task_by_id_or_title(task_id, title, created_by)
 
-        # Build update payload dynamically
-        update_data = {}
-
-        # Update fields only if provided
-        if title is not None:
-            update_data["title"] = title
-        if description is not None:
-            update_data["description"] = description
-        if due_date is not None:
-            update_data["due_date"] = due_date
+        assigned_to_user = None
         if assigned_to is not None:
-            assigned_user = validator.get_user_by_username(assigned_to)
-            update_data["assigned_to"] = assigned_user.id
-        if priority is not None:
-            update_data["priority"] = validator.validate_priority(priority)
-        if status is not None:
-            update_data["status"] = validator.validate_status(status)
+            assigned_to_user = validator.get_user_by_username(assigned_to)
 
+        update_data = {
+            "title": title if title else task.title,
+            "description": description if description else task.description,
+            "priority": priority if priority else task.priority,
+            "status": status if status else task.status,
+            "due_date": due_date if due_date else task.due_date,
+            "assigned_to": assigned_to_user.id if assigned_to_user else (task.assigned_to.id if task.assigned_to else None),
+        }
         # Use DRF serializer for validation + update
         serializer = TaskSerializer(task, data=update_data, partial=True)
         if serializer.is_valid():
