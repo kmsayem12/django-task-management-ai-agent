@@ -95,16 +95,27 @@ class ToolsValidator:
             raise TaskToolsError(f"User with ID {user_id} does not exist")
 
     @staticmethod
-    def get_task_by_id_or_title(task_id: Optional[int] = None, title: Optional[str] = None) -> Task:
+    def get_user_by_username(username: str):
+        """Get user by username with proper error handling."""
+        print("Incoming username type:", type(username), "value:", username)
+        User = get_user_model()
+        try:
+            return User.objects.get(username=username.strip())
+        except User.DoesNotExist:
+            raise TaskToolsError(
+                f"User with username {username} does not exist")
+
+    @staticmethod
+    def get_task_by_id_or_title(task_id: Optional[int] = None, title: Optional[str] = None, created_by: Optional[int] = None) -> Task:
         """Get a single task by ID or title with proper error handling."""
         if not task_id and not title:
             raise TaskToolsError("Either task_id or title must be provided")
 
         try:
             if task_id is not None:
-                return Task.objects.get(id=task_id)
+                return Task.objects.get(id=task_id, created_by=created_by)
             else:
-                return Task.objects.get(title=title)
+                return Task.objects.get(title=title, created_by=created_by)
         except Task.DoesNotExist:
             identifier = f"ID {task_id}" if task_id else f"title '{title}'"
             raise TaskToolsError(f"Task with {identifier} does not exist")
