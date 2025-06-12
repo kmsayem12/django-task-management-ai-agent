@@ -1,70 +1,107 @@
 import json
+from typing import Optional, List, Dict, Any
 from django.db.models import Q
+from django.core.exceptions import ValidationError
 from langchain_core.tools import tool
 from django.contrib.auth import get_user_model
 from langchain_core.runnables import RunnableConfig
 
 from tasks_app.models import Task
 from tasks_app.serializers import TaskSerializer
+from tasks_app import STATUS_CHOICES, PRIORITY_CHOICES
+from ai_agent.tools_validator import ToolsValidator, TaskToolsError
 
 
 @tool
-def get_tasks(config: RunnableConfig, limit: int = 5):
+def get_tasks(config: RunnableConfig, limit: int = 5) -> List[Dict[str, Any]]:
     """
-    list of latest 5 tasks for the created_by user
-    arguments: 
-    limit number of results and default is 5 max limit is 20
+    Get a list of latest tasks for the authenticated user.
+
+    Args:
+        config: Configuration containing user information
+        limit: Number of results (default: 5, max: 20)
+
+    Returns:
+        List of task dictionaries
     """
-    metadata = config.get('configurable') or config.get('metadata')
-    created_by = metadata.get('created_by')
-
-    if limit >= 20:
-        limit = 20
-
-    if not created_by:
-        raise Exception("created_by is required")
-
     try:
+        # Initialize validator instance
+        validator = ToolsValidator()
+        created_by = validator.get_user_from_config(config)
+        validated_limit = validator.validate_limit(limit)
+
         tasks = Task.objects.filter(
-            created_by=created_by).order_by('-created_at')[:limit]
+            created_by=created_by
+        ).order_by('-created_at')[:validated_limit]
+
+        return validator.serialize_tasks(tasks)
+
     except Exception as e:
-        raise Exception(f"Error get task list: {e}")
-    return tasks
+        if isinstance(e, TaskToolsError):
+            raise
+        raise TaskToolsError(f"Error retrieving tasks: {str(e)}")
 
 
 @tool
-def create_task(title: str, description: str, priority: str, status: str, config: RunnableConfig, assigned_to: int = None, due_date: str = None):
+def create_task(
+    title: str,
+    description: str,
+    config: RunnableConfig,
+    priority: Optional[str] = None,
+    status: Optional[str] = None,
+    assigned_to: Optional[int] = None,
+    due_date: Optional[str] = None
+) -> Dict[str, Any]:
     """
-    Creates new task based on arguments
-    Arguments are:
-    title and description and assigned_to and due_date and priority and status are get from the messages
-    assigned_to and priority and status is not required
+    Create a new task.
+
+    Args:
+        title: Task title (required)
+        description: Task description (required)
+        config: Configuration containing user information
+        priority: Task priority (optional, default: 'medium')
+        status: Task status (optional, default: 'todo')
+        assigned_to: User ID to assign task to (optional)
+        due_date: Due date in string format (optional)
+
+    Returns:
+        Created task dictionary
     """
-    metadata = config.get('configurable') or config.get('metadata')
-    created_by = metadata.get('created_by')
-    User = get_user_model()
-
-    if not created_by:
-        raise Exception("created_by is required")
-
-    if not priority:
-        priority = 'medium'
-
-    if not status:
-        status = 'todo'
-
-    if assigned_to is not None:
-        assigned_to_user = User.objects.get(id=assigned_to)
-    else:
-        assigned_to_user = None
     try:
-        created_by = User.objects.get(id=created_by)
+        # Initialize validator instance
+        validator = ToolsValidator()
 
-        task = Task(title=title, description=description,
-                    priority=priority,
-                    status=status,
-                    due_date=due_date, assigned_to=assigned_to_user, created_by=created_by)
-        task.save()
+        # 1. Extract user and validate fields
+        created_by_id = validator.get_user_from_config(config)
+        created_by_user = validator.get_user_by_id(created_by_id)
+
+        validated_priority = validator.validate_priority(priority)
+        validated_status = validator.validate_status(status)
+
+        assigned_to_user = None
+        if assigned_to is not None:
+            assigned_to_user = validator.get_user_by_id(assigned_to)
+
+         # 2. Build input data for the serializer
+        task_data = {
+            "title": title,
+            "description": description,
+            "priority": validated_priority,
+            "status": validated_status,
+            "due_date": due_date,
+            "assigned_to": assigned_to_user.id if assigned_to_user else None,
+            "created_by": created_by_user.id
+        }
+
+        print('task_data', task_data)
+        # 3. Use DRF serializer for validation + creation
+        serializer = TaskSerializer(data=task_data)
+        if serializer.is_valid():
+            task = serializer.save()
+            return serializer.data
+        else:
+            raise TaskToolsError(f"Validation error: {serializer.errors}")
+
     except Exception as e:
         raise Exception(f"Error creating task: {e}")
 
@@ -72,118 +109,171 @@ def create_task(title: str, description: str, priority: str, status: str, config
 
 
 @tool
-def update_task(task_id: int = None, title: str = None, description: str = None, due_date: str = None, assigned_to: str = None, priority: str = None, status: str = None, config: RunnableConfig = None):
+def update_task(
+    config: RunnableConfig,
+    task_id: Optional[int] = None,
+    title: Optional[str] = None,
+    description: Optional[str] = None,
+    due_date: Optional[str] = None,
+    assigned_to: Optional[int] = None,
+    priority: Optional[str] = None,
+    status: Optional[str] = None
+) -> Dict[str, Any]:
     """
-    Update the task by task_id or title based on arguments
-    Arguments are:
-    title and description and assigned_to and due_date and priority and status are get from the messages
-    all arguments is optional
+    Update an existing task by ID or title.
+
+    Args:
+        config: Configuration containing user information
+        task_id: Task ID to update (optional if title provided)
+        title: Task title to find and update (optional if task_id provided)
+        description: New description (optional)
+        due_date: New due date (optional)
+        assigned_to: New assigned user ID (optional)
+        priority: New priority (optional)
+        status: New status (optional)
+
+    Returns:
+        Updated task dictionary
     """
-    print('update_task', task_id, title, description,
-          due_date, assigned_to, priority, status, config)
-    if task_id is not None:
-        task = Task.objects.get(id=task_id)
-    else:
-        task = Task.objects.get(title=title)
-
-    if not task:
-        raise Exception("Task does not found")
-
-    if title is not None:
-        task.title = title
-    if description is not None:
-        task.description = description
-    if due_date is not None:
-        task.due_date = due_date
-    if assigned_to is not None:
-        task.assigned_to = assigned_to
-    if priority is not None:
-        task.priority = priority
-    if status is not None:
-        task.status = status
-
     try:
-        task.title = task.title
-        task.description = task.description
-        task.due_date = task.due_date
-        task.assigned_to = task.assigned_to
-        task.priority = task.priority
-        task.status = task.status
-        task.save()
-    except Exception as e:
-        raise Exception(f"Error updating task: {e}")
-    except Task.MultipleObjectsReturned:
-        raise Exception("Multiple tasks found with the same title!")
-    return task
+        # Initialize validator instance
+        validator = ToolsValidator()
+        task = validator.get_task_by_id_or_title(task_id, title)
+        # Build update payload dynamically
+        update_data = {}
 
+        # Update fields only if provided
+        if title is not None:
+            update_data["title"] = title
+        if description is not None:
+            update_data["description"] = description
+        if due_date is not None:
+            update_data["due_date"] = due_date
+        if assigned_to is not None:
+            assigned_user = validator.get_user_by_id(assigned_to)
+            update_data["assigned_to"] = assigned_user.id
+        if priority is not None:
+            update_data["priority"] = validator.validate_priority(priority)
+        if status is not None:
+            update_data["status"] = validator.validate_status(status)
 
-@tool
-def delete_task(task_id: int = None, title: str = None, config: RunnableConfig = None):
-    """
-    Deletes the task by task_id or title based on arguments
-    Arguments are:
-    task_id and title are get from the messages
-    """
-    if task_id is not None:
-        task = Task.objects.get(id=task_id)
-    else:
-        task = Task.objects.get(title=title)
+        serializer = TaskSerializer(task, data=update_data, partial=True)
 
-    try:
-        task.delete()
-    except Task.DoesNotExist:
-        raise Exception("Task does not exist")
-    except Task.MultipleObjectsReturned:
-        raise Exception("Multiple tasks found with the same title!")
-    return task
-
-
-@tool
-def get_task(task_id: int = None, title: str = None, config: RunnableConfig = None):
-    """
-    get single task by task_id or title based on arguments
-    Arguments are:
-    task_id and title are get from the messages
-    """
-
-    try:
-        if task_id is not None:
-            task = Task.objects.get(id=task_id)
+        if serializer.is_valid():
+            updated_task = serializer.save()
+            return serializer.data
         else:
-            task = Task.objects.get(title=title)
+            raise TaskToolsError(f"Validation error: {serializer.errors}")
 
-    except Task.DoesNotExist:
-        raise Exception("Task does not exist")
-    except Task.MultipleObjectsReturned:
-        raise Exception("Multiple tasks found with the same title!")
-    return task
+    except ValidationError as e:
+        raise TaskToolsError(f"Validation error: {str(e)}")
+    except Exception as e:
+        if isinstance(e, TaskToolsError):
+            raise
+        raise TaskToolsError(f"Error updating task: {str(e)}")
 
 
-def search_tasks(query: str,  config: RunnableConfig, limit: int = 5):
+@tool
+def delete_task(
+    config: RunnableConfig,
+    task_id: Optional[int] = None,
+    title: Optional[str] = None
+) -> Dict[str, str]:
     """
-    search the latest 5 tasks for the created_by user
-    arguments: 
-    query string are looked up in title and description
-    limit number of results and default is 5 max limit is 20
+    Delete a task by ID or title.
+
+    Args:
+        config: Configuration containing user information
+        task_id: Task ID to delete (optional if title provided)
+        title: Task title to find and delete (optional if task_id provided)
+
+    Returns:
+        Success message dictionary
     """
-    metadata = config.get('configurable') or config.get('metadata')
-    created_by = metadata.get('created_by')
+    try:
+        # Initialize validator instance
+        validator = ToolsValidator()
+        task = validator.get_task_by_id_or_title(task_id, title)
+        task_identifier = f"'{task.title}' (ID: {task.id})"
+        task.delete()
 
-    if limit >= 20:
-        limit = 20
+        return {"message": f"Task {task_identifier} deleted successfully"}
 
-    if not created_by:
-        raise Exception("created_by is required")
-
-    tasks = Task.objects.filter(
-        created_by=created_by
-    ).filter(Q(title__icontains=query) | Q(
-        description__icontains=query)).order_by('-created_at')[:limit]
-    # return tasks
-    serialized = TaskSerializer(tasks, many=True)
-    return json.dumps(serialized.data)
+    except Exception as e:
+        if isinstance(e, TaskToolsError):
+            raise
+        raise TaskToolsError(f"Error deleting task: {str(e)}")
 
 
+@tool
+def get_task(
+    config: RunnableConfig,
+    task_id: Optional[int] = None,
+    title: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Get a single task by ID or title.
+
+    Args:
+        config: Configuration containing user information
+        task_id: Task ID to retrieve (optional if title provided)
+        title: Task title to find (optional if task_id provided)
+
+    Returns:
+        Task dictionary
+    """
+    try:
+        # Initialize validator instance
+        validator = ToolsValidator()
+        task = validator.get_task_by_id_or_title(task_id, title)
+        return validator.serialize_task(task)
+
+    except Exception as e:
+        if isinstance(e, TaskToolsError):
+            raise
+        raise TaskToolsError(f"Error retrieving task: {str(e)}")
+
+
+@tool
+def search_tasks(
+    query: str,
+    config: RunnableConfig,
+    limit: int = 5
+) -> List[Dict[str, Any]]:
+    """
+    Search tasks by query string in title and description.
+
+    Args:
+        query: Search query string
+        config: Configuration containing user information
+        limit: Number of results (default: 5, max: 20)
+
+    Returns:
+        List of matching task dictionaries
+    """
+    try:
+        # Initialize validator instance
+        validator = ToolsValidator()
+        created_by = validator.get_user_from_config(config)
+        validated_limit = validator.validate_limit(limit)
+        validated_query = validator.validate_search_query(query)
+
+        tasks = Task.objects.filter(
+            created_by=created_by
+        ).filter(
+            Q(title__icontains=validated_query) | Q(
+                description__icontains=validated_query)
+        ).order_by('-created_at')[:validated_limit]
+
+        return validator.serialize_tasks(tasks)
+
+    except Exception as e:
+        if isinstance(e, TaskToolsError):
+            raise
+        raise TaskToolsError(f"Error searching tasks: {str(e)}")
+
+
+# Export all tools
 task_tools = [
     get_tasks,
     create_task,
@@ -193,12 +283,12 @@ task_tools = [
     search_tasks
 ]
 
-# __all__ = [
-#     'task_tools',
-#     'get_tasks',
-#     'create_task',
-#     'update_task',
-#     'delete_task',
-#     'get_task',
-#     'search_tasks'
-# ]
+__all__ = [
+    'task_tools',
+    'get_tasks',
+    'create_task',
+    'update_task',
+    'delete_task',
+    'get_task',
+    'search_tasks',
+]
