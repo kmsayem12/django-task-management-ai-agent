@@ -49,7 +49,7 @@ def create_task(
     config: RunnableConfig,
     priority: Optional[str] = None,
     status: Optional[str] = None,
-    assigned_to: Optional[int] = None,
+    assigned_to: Optional[str] = None,
     due_date: Optional[str] = None
 ) -> Dict[str, Any]:
     """
@@ -61,7 +61,7 @@ def create_task(
         config: Configuration containing user information
         priority: Task priority (optional, default: 'medium')
         status: Task status (optional, default: 'todo')
-        assigned_to: User ID to assign task to (optional)
+        assigned_to: username to assign task to (optional)
         due_date: Due date in string format (optional)
 
     Returns:
@@ -80,7 +80,7 @@ def create_task(
 
         assigned_to_user = None
         if assigned_to is not None:
-            assigned_to_user = validator.get_user_by_id(assigned_to)
+            assigned_to_user = validator.get_user_by_username(assigned_to)
 
          # 2. Build input data for the serializer
         task_data = {
@@ -93,7 +93,6 @@ def create_task(
             "created_by": created_by_user.id
         }
 
-        print('task_data', task_data)
         # 3. Use DRF serializer for validation + creation
         serializer = TaskSerializer(data=task_data)
         if serializer.is_valid():
@@ -138,7 +137,9 @@ def update_task(
     try:
         # Initialize validator instance
         validator = ToolsValidator()
-        task = validator.get_task_by_id_or_title(task_id, title)
+        created_by = validator.get_user_from_config(config)
+        task = validator.get_task_by_id_or_title(task_id, title, created_by)
+
         # Build update payload dynamically
         update_data = {}
 
@@ -193,7 +194,8 @@ def delete_task(
     try:
         # Initialize validator instance
         validator = ToolsValidator()
-        task = validator.get_task_by_id_or_title(task_id, title)
+        created_by = validator.get_user_from_config(config)
+        task = validator.get_task_by_id_or_title(task_id, title, created_by)
         task_identifier = f"'{task.title}' (ID: {task.id})"
         task.delete()
 
@@ -225,7 +227,8 @@ def get_task(
     try:
         # Initialize validator instance
         validator = ToolsValidator()
-        task = validator.get_task_by_id_or_title(task_id, title)
+        created_by = validator.get_user_from_config(config)
+        task = validator.get_task_by_id_or_title(task_id, title, created_by)
         return validator.serialize_task(task)
 
     except Exception as e:
