@@ -114,7 +114,7 @@ def update_task(
     title: Optional[str] = None,
     description: Optional[str] = None,
     due_date: Optional[str] = None,
-    assigned_to: Optional[int] = None,
+    assigned_to: Optional[str] = None,
     priority: Optional[str] = None,
     status: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -127,7 +127,7 @@ def update_task(
         title: Task title to find and update (optional if task_id provided)
         description: New description (optional)
         due_date: New due date (optional)
-        assigned_to: New assigned user ID (optional)
+        assigned_to: New assigned username (optional)
         priority: New priority (optional)
         status: New status (optional)
 
@@ -151,15 +151,15 @@ def update_task(
         if due_date is not None:
             update_data["due_date"] = due_date
         if assigned_to is not None:
-            assigned_user = validator.get_user_by_id(assigned_to)
+            assigned_user = validator.get_user_by_username(assigned_to)
             update_data["assigned_to"] = assigned_user.id
         if priority is not None:
             update_data["priority"] = validator.validate_priority(priority)
         if status is not None:
             update_data["status"] = validator.validate_status(status)
 
+        # Use DRF serializer for validation + update
         serializer = TaskSerializer(task, data=update_data, partial=True)
-
         if serializer.is_valid():
             updated_task = serializer.save()
             return serializer.data
