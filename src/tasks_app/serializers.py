@@ -36,19 +36,6 @@ class TaskSerializer(serializers.ModelSerializer):
     def get_created_by_username(self, obj):
         return obj.created_by.username if obj.created_by else None
 
-    def update(self, instance, validated_data):
-        # Allow updating assigned_to by username if provided
-        assigned_to_username = validated_data.pop('assigned_to_username', None)
-        if assigned_to_username:
-            try:
-                assigned_to_user = User.objects.get(
-                    username=assigned_to_username)
-                validated_data['assigned_to'] = assigned_to_user
-            except User.DoesNotExist:
-                raise serializers.ValidationError(
-                    {"assigned_to_username": "User does not exist"})
-        return super().update(instance, validated_data)
-
     def validate_title(self, value):
         if not value.strip():
             raise serializers.ValidationError("Title cannot be empty.")
