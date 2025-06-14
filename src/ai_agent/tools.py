@@ -139,6 +139,9 @@ def update_task(
         created_by = validator.get_user_from_config(config)
         task = validator.get_task_by_id_or_title(task_id, title, created_by)
 
+        validated_priority = validator.validate_priority(priority)
+        validated_status = validator.validate_status(status)
+
         assigned_to_user = None
         if assigned_to is not None:
             assigned_to_user = validator.get_user_by_username(assigned_to)
@@ -146,8 +149,8 @@ def update_task(
         update_data = {
             "title": title if title else task.title,
             "description": description if description else task.description,
-            "priority": priority if priority else task.priority,
-            "status": status if status else task.status,
+            "priority": validated_priority if priority else task.priority,
+            "status": validated_status if status else task.status,
             "due_date": due_date if due_date else task.due_date,
             "assigned_to": assigned_to_user.id if assigned_to_user else (task.assigned_to.id if task.assigned_to else None),
         }
